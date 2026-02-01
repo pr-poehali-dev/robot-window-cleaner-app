@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Icon from '@/components/ui/icon';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -6,6 +6,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
+import { toast } from 'sonner';
+import { api, Robot } from '@/lib/api';
+import RobotCard from '@/components/RobotCard';
 
 type View = 'login' | 'register' | 'home' | 'robots' | 'schedule' | 'settings';
 type ConnectState = 'idle' | 'searching' | 'instructions' | 'connecting' | 'connected';
@@ -13,20 +16,59 @@ type ConnectState = 'idle' | 'searching' | 'instructions' | 'connecting' | 'conn
 export default function Index() {
   const [view, setView] = useState<View>('login');
   const [connectState, setConnectState] = useState<ConnectState>('idle');
+  const [robots, setRobots] = useState<Robot[]>([]);
+  const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [birthDate, setBirthDate] = useState('');
+  const [hasCleaning, setHasCleaning] = useState(true);
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setView('home');
+  useEffect(() => {
+    const token = localStorage.getItem('auth_token');
+    if (token && view === 'login') {
+      setView('home');
+      loadRobots();
+    }
+  }, []);
+
+  const loadRobots = async () => {
+    try {
+      const robotsList = await api.getRobots();
+      setRobots(robotsList);
+    } catch (error) {
+      console.error('Failed to load robots:', error);
+    }
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setView('home');
+    setLoading(true);
+    try {
+      await api.login(email);
+      toast.success('Вход выполнен успешно!');
+      setView('home');
+      loadRobots();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Ошибка входа');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await api.register({ email, first_name: firstName, last_name: lastName, birth_date: birthDate });
+      toast.success('Регистрация выполнена!');
+      setView('home');
+      loadRobots();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Ошибка регистрации');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleConnectRobot = () => {
@@ -39,14 +81,24 @@ export default function Index() {
   const handleNext = () => {
     if (connectState === 'instructions') {
       setConnectState('connecting');
-      setTimeout(() => {
+      setTimeout(async () => {
         setConnectState('connected');
+        try {
+          await api.connectRobot({ has_cleaning: hasCleaning });
+          toast.success('Робот подключен!');
+          loadRobots();
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : 'Ошибка подключения');
+        }
       }, 3000);
     }
   };
 
   const handleDeleteAccount = () => {
+    api.clearToken();
     setView('login');
+    setRobots([]);
+    toast.success('Аккаунт удален');
   };
 
   if (view === 'login') {
@@ -77,8 +129,8 @@ export default function Index() {
               />
             </div>
 
-            <Button type="submit" className="w-full bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-opacity">
-              Войти
+            <Button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-opacity">
+              {loading ? 'Вход...' : 'Войти'}
             </Button>
 
             <Separator className="my-6" />
@@ -169,8 +221,8 @@ export default function Index() {
               />
             </div>
 
-            <Button type="submit" className="w-full bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-opacity">
-              Создать аккаунт
+            <Button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-opacity">
+              {loading ? 'Создание...' : 'Создать аккаунт'}
             </Button>
 
             <Separator className="my-6" />
@@ -216,7 +268,7 @@ export default function Index() {
             <Button
               variant={view === 'home' ? 'default' : 'ghost'}
               size="sm"
-              onClick={() => setView('home')}
+              onClick={() => { setView('home'); setConnectState('idle'); }}
               className={view === 'home' ? 'bg-gradient-to-r from-primary to-secondary' : ''}
             >
               <Icon name="Home" size={18} className="mr-2" />
@@ -256,7 +308,7 @@ export default function Index() {
       <main className="max-w-7xl mx-auto px-4 py-8">
         {view === 'home' && (
           <div className="animate-fade-in">
-            {connectState === 'idle' && (
+            {connectState === 'idle' && robots.length === 0 && (
               <div className="flex flex-col items-center justify-center min-h-[60vh]">
                 <div className="text-center mb-8">
                   <h2 className="text-4xl font-bold mb-4">Добро пожаловать!</h2>
@@ -270,6 +322,28 @@ export default function Index() {
                   <Icon name="Plus" size={24} className="mr-3" />
                   Подключить робота
                 </Button>
+              </div>
+            )}
+
+            {connectState === 'idle' && robots.length > 0 && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-3xl font-bold">Ваши роботы</h2>
+                  {robots.length < 2 && (
+                    <Button
+                      onClick={handleConnectRobot}
+                      className="bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-opacity"
+                    >
+                      <Icon name="Plus" size={20} className="mr-2" />
+                      Подключить робота
+                    </Button>
+                  )}
+                </div>
+                <div className="grid md:grid-cols-2 gap-6">
+                  {robots.map((robot) => (
+                    <RobotCard key={robot.id} robot={robot} onUpdate={loadRobots} />
+                  ))}
+                </div>
               </div>
             )}
 
@@ -324,6 +398,27 @@ export default function Index() {
                           </p>
                         </div>
                       </div>
+
+                      <div className="flex gap-4">
+                        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center font-bold">
+                          3
+                        </div>
+                        <div>
+                          <p className="font-semibold">Выберите режим</p>
+                          <div className="mt-2 flex items-center gap-2 bg-background/50 rounded-lg p-3">
+                            <input
+                              type="checkbox"
+                              id="hasCleaning"
+                              checked={hasCleaning}
+                              onChange={(e) => setHasCleaning(e.target.checked)}
+                              className="w-4 h-4"
+                            />
+                            <label htmlFor="hasCleaning" className="text-sm cursor-pointer">
+                              С функцией мойки окон
+                            </label>
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
                     <Button
@@ -353,56 +448,15 @@ export default function Index() {
             )}
 
             {connectState === 'connected' && (
-              <div className="animate-fade-in space-y-6">
-                <div className="text-center py-8">
-                  <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-to-br from-primary to-secondary mb-4 animate-pulse-glow">
-                    <Icon name="Check" size={40} className="text-white" />
-                  </div>
-                  <h2 className="text-3xl font-bold mb-2">Робот подключен!</h2>
-                  <p className="text-muted-foreground">Теперь вы можете управлять вашим VÖLM</p>
+              <div className="animate-fade-in text-center">
+                <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-to-br from-primary to-secondary mb-4 animate-pulse-glow">
+                  <Icon name="Check" size={40} className="text-white" />
                 </div>
-
-                <Card className="p-6 bg-card/95 backdrop-blur border-border/50">
-                  <div className="flex items-start gap-6">
-                    <div className="flex-shrink-0">
-                      <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                        <Icon name="Bot" size={48} className="text-white" />
-                      </div>
-                    </div>
-
-                    <div className="flex-1 space-y-4">
-                      <div>
-                        <h3 className="text-2xl font-bold mb-1">VÖLM Robot #1</h3>
-                        <p className="text-muted-foreground">Модель: VLM-2024</p>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-4">
-                        <div className="bg-muted/30 rounded-2xl p-4 text-center">
-                          <Icon name="Battery" size={24} className="mx-auto mb-2 text-primary" />
-                          <p className="text-sm text-muted-foreground mb-1">Батарея</p>
-                          <p className="text-2xl font-bold">87%</p>
-                        </div>
-
-                        <div className="bg-muted/30 rounded-2xl p-4 text-center">
-                          <Icon name="Wifi" size={24} className="mx-auto mb-2 text-secondary" />
-                          <p className="text-sm text-muted-foreground mb-1">Статус</p>
-                          <p className="text-lg font-semibold text-secondary">Онлайн</p>
-                        </div>
-
-                        <div className="bg-muted/30 rounded-2xl p-4 text-center">
-                          <Icon name="Activity" size={24} className="mx-auto mb-2 text-accent" />
-                          <p className="text-sm text-muted-foreground mb-1">Задача</p>
-                          <p className="text-lg font-semibold">Готов</p>
-                        </div>
-                      </div>
-
-                      <Button className="w-full bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-opacity">
-                        <Icon name="Play" size={20} className="mr-2" />
-                        Начать мойку
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
+                <h2 className="text-3xl font-bold mb-2">Робот подключен!</h2>
+                <p className="text-muted-foreground mb-6">Перезагрузите страницу или перейдите в раздел "Роботы"</p>
+                <Button onClick={() => { setConnectState('idle'); loadRobots(); }} className="bg-gradient-to-r from-primary to-secondary">
+                  Вернуться на главную
+                </Button>
               </div>
             )}
           </div>
@@ -412,42 +466,27 @@ export default function Index() {
           <div className="animate-fade-in space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-3xl font-bold">Мои роботы</h2>
-              <Button className="bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-opacity">
-                <Icon name="Plus" size={20} className="mr-2" />
-                Подключить робота
-              </Button>
+              {robots.length < 2 && (
+                <Button onClick={handleConnectRobot} className="bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-opacity">
+                  <Icon name="Plus" size={20} className="mr-2" />
+                  Подключить робота
+                </Button>
+              )}
             </div>
 
             <div className="grid md:grid-cols-2 gap-6">
-              <Card className="p-6 bg-card/95 backdrop-blur border-border/50">
-                <div className="flex items-start gap-4">
-                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center flex-shrink-0">
-                    <Icon name="Bot" size={32} className="text-white" />
+              {robots.map((robot) => (
+                <RobotCard key={robot.id} robot={robot} onUpdate={loadRobots} />
+              ))}
+              {robots.length < 2 && (
+                <Card className="p-6 bg-card/95 backdrop-blur border-border/50 border-dashed opacity-50">
+                  <div className="flex flex-col items-center justify-center h-full text-center py-4">
+                    <Icon name="Plus" size={32} className="text-muted-foreground mb-2" />
+                    <p className="text-muted-foreground">Слот для {robots.length === 0 ? 'первого' : 'второго'} робота</p>
+                    <p className="text-sm text-muted-foreground/70 mt-1">Максимум 2 робота</p>
                   </div>
-                  <div className="flex-1">
-                    <h3 className="text-xl font-bold mb-1">VÖLM Robot #1</h3>
-                    <p className="text-sm text-muted-foreground mb-3">VLM-2024</p>
-                    <div className="flex gap-2">
-                      <div className="flex items-center gap-1 text-sm">
-                        <Icon name="Battery" size={16} className="text-primary" />
-                        <span>87%</span>
-                      </div>
-                      <div className="flex items-center gap-1 text-sm text-secondary">
-                        <Icon name="Wifi" size={16} />
-                        <span>Онлайн</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-
-              <Card className="p-6 bg-card/95 backdrop-blur border-border/50 border-dashed opacity-50">
-                <div className="flex flex-col items-center justify-center h-full text-center py-4">
-                  <Icon name="Plus" size={32} className="text-muted-foreground mb-2" />
-                  <p className="text-muted-foreground">Слот для второго робота</p>
-                  <p className="text-sm text-muted-foreground/70 mt-1">Максимум 2 робота</p>
-                </div>
-              </Card>
+                </Card>
+              )}
             </div>
           </div>
         )}

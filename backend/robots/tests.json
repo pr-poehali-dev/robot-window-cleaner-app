@@ -1,0 +1,36 @@
+{
+  "tests": [
+    {
+      "name": "Test get robots list",
+      "method": "GET",
+      "path": "/",
+      "headers": {
+        "Authorization": "Bearer test-token"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "robots": "array"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Test connect new robot",
+      "method": "POST",
+      "path": "/connect",
+      "headers": {
+        "Authorization": "Bearer test-token"
+      },
+      "body": {
+        "name": "VÖLM Robot",
+        "has_cleaning": true
+      },
+      "expectedStatus": 201,
+      "expectedBody": {
+        "id": "number",
+        "name": "string",
+        "has_cleaning": "boolean"
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}
